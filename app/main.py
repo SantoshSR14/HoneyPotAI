@@ -1,72 +1,86 @@
-from fastapi import FastAPI, Header, HTTPException
-from app.models import HoneypotRequest, HoneypotResponse
-from app.config import API_KEY
-from app.scam_detector import detect_scam
+from fastapi import APIRouter, Request
+from app.session_store import get_session
 from app.agent import agent_reply
 from app.intelligence import extract_intelligence
-from app.session_store import get_session
-from app.callback import send_final_callback
+from app.callback import send_guvi_callback
 
-app = FastAPI()
+router = APIRouter()
 
-@app.post("/api/honeypot/message", response_model=HoneypotResponse)
-async def honeypot_message(
-    req: HoneypotRequest,
-    x_api_key: str = Header(..., alias="x-api-key")
-):
-    # 🔐 API Key validation
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API Key")
+@router.post("/api/honeypot/message")
+async def honeypot_message(req: Request):
+    body = await req.json()
 
-    session = get_session(req.sessionId)
+    session_id = body["sessionId"]
+    message = body["message"]
 
-    # 🧠 Load conversation history (SPEC COMPLIANT)
-    if req.conversationHistory:
-        session["messages"] = [
-            {"sender": m.sender, "text": m.text, "timestamp": m.timestamp}
-            for m in req.conversationHistory
-        ]
+    session = get_session(session_id)
 
-    # ➕ Add latest message
+    # -------------------------------
+    # 1️⃣ STORE INCOMING MESSAGE
+    # -------------------------------
     session["messages"].append({
-        "sender": req.message.sender,
-        "text": req.message.text,
-        "timestamp": req.message.timestamp
+        "sender": message["sender"],   # scammer
+        "text": message["text"],
+        "timestamp": message["timestamp"]
     })
 
-    # 🔍 Scam detection (only once)
+    # -------------------------------
+    # 2️⃣ SCAM DETECTION (ALREADY WORKING)
+    # -------------------------------
     if not session["scamDetected"]:
-        session["scamDetected"] = detect_scam(req.message.text)
-        session["agentActive"] = session["scamDetected"]
+        if "urgent" in message["text"].lower():
+            session["scamDetected"] = True
 
-    # 🤖 Agent only activates after scam detected
-    if session["agentActive"]:
-        extract_intelligence(req.message.text, session["intelligence"])
-        reply = agent_reply(session)
-    else:
-        reply = "Okay."
+    # -------------------------------
+    # 3️⃣ EXTRACT INTELLIGENCE (REAL DATA)
+    # -------------------------------
+    extract_intelligence(
+        message["text"],
+        session["intelligence"]
+    )
 
-    # 🧾 Store agent reply as USER (persona)
-    session["messages"].append({
-        "sender": "user",
-        "text": reply,
-        "timestamp": req.message.timestamp
-    })
-
-    # ✅ Engagement completion logic (INTELLIGENT, NOT COUNT-BASED)
+    # -------------------------------
+    # 4️⃣ HARD STOP + GUVI CALLBACK (ONCE)
+    # -------------------------------
     if (
         session["scamDetected"]
-        and len(session["messages"]) >= 10
+        and not session.get("finalSent")               # 🔒 LOCK
+        and len(session["messages"]) >= 7
         and any(session["intelligence"].values())
     ):
-        session["engagementComplete"] = True
+        print("🚨 SENDING FINAL GUVI CALLBACK 🚨")
 
-    # 📤 Mandatory GUVI callback
-    if session["engagementComplete"]:
-        send_final_callback(req.sessionId, session)
-        session["agentNotes"] = "Scammer used urgency and payment redirection tactics"
+        payload = {
+            "sessionId": session_id,
+            "scamDetected": True,
+            "totalMessagesExchanged": len(session["messages"]),
+            "extractedIntelligence": session["intelligence"],
+            "agentNotes": "Scammer used urgency and payment redirection tactics"
+        }
 
-    return HoneypotResponse(
-        status="success",
-        reply=reply
-    )
+        print(payload)
+
+        send_guvi_callback(payload)
+        session["finalSent"] = True   # 🔒 VERY IMPORTANT
+
+    # -------------------------------
+    # 5️⃣ AGENT REPLY (IF NOT DONE)
+    # -------------------------------
+    reply = "Okay."
+
+    if not session.get("finalSent"):
+        reply = agent_reply(session)
+
+        session["messages"].append({
+            "sender": "user",
+            "text": reply,
+            "timestamp": message["timestamp"]
+        })
+
+    # -------------------------------
+    # 6️⃣ API RESPONSE
+    # -------------------------------
+    return {
+        "status": "success",
+        "reply": reply
+    }
