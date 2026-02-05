@@ -1,12 +1,13 @@
-from fastapi import APIRouter, Request
+from fastapi import FastAPI, Request
 from app.session_store import get_session
 from app.agent import agent_reply
 from app.intelligence import extract_intelligence
 from app.callback import send_guvi_callback
 
-router = APIRouter()
+app = FastAPI()   # 🔴 THIS WAS MISSING
 
-@router.post("/api/honeypot/message")
+
+@app.post("/api/honeypot/message")
 async def honeypot_message(req: Request):
     body = await req.json()
 
@@ -15,36 +16,28 @@ async def honeypot_message(req: Request):
 
     session = get_session(session_id)
 
-    # -------------------------------
-    # 1️⃣ STORE INCOMING MESSAGE
-    # -------------------------------
+    # 1️⃣ Store incoming message (from scammer)
     session["messages"].append({
-        "sender": message["sender"],   # scammer
+        "sender": message["sender"],
         "text": message["text"],
         "timestamp": message["timestamp"]
     })
 
-    # -------------------------------
-    # 2️⃣ SCAM DETECTION (ALREADY WORKING)
-    # -------------------------------
+    # 2️⃣ Scam detection (simple trigger, already works)
     if not session["scamDetected"]:
         if "urgent" in message["text"].lower():
             session["scamDetected"] = True
 
-    # -------------------------------
-    # 3️⃣ EXTRACT INTELLIGENCE (REAL DATA)
-    # -------------------------------
+    # 3️⃣ Extract intelligence from scammer text
     extract_intelligence(
         message["text"],
         session["intelligence"]
     )
 
-    # -------------------------------
     # 4️⃣ HARD STOP + GUVI CALLBACK (ONCE)
-    # -------------------------------
     if (
         session["scamDetected"]
-        and not session.get("finalSent")               # 🔒 LOCK
+        and not session["finalSent"]
         and len(session["messages"]) >= 7
         and any(session["intelligence"].values())
     ):
@@ -59,16 +52,14 @@ async def honeypot_message(req: Request):
         }
 
         print(payload)
-
         send_guvi_callback(payload)
-        session["finalSent"] = True   # 🔒 VERY IMPORTANT
 
-    # -------------------------------
-    # 5️⃣ AGENT REPLY (IF NOT DONE)
-    # -------------------------------
+        session["finalSent"] = True
+
+    # 5️⃣ Agent reply (only if not finished)
     reply = "Okay."
 
-    if not session.get("finalSent"):
+    if not session["finalSent"]:
         reply = agent_reply(session)
 
         session["messages"].append({
@@ -77,9 +68,6 @@ async def honeypot_message(req: Request):
             "timestamp": message["timestamp"]
         })
 
-    # -------------------------------
-    # 6️⃣ API RESPONSE
-    # -------------------------------
     return {
         "status": "success",
         "reply": reply
