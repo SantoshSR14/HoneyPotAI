@@ -2,19 +2,21 @@
 
 sessions = {}
 
-def get_session(session_id: str) -> dict:
+
+def get_or_create_session(session_id: str):
     if session_id not in sessions:
         sessions[session_id] = {
+            "sessionId": session_id,
             "messages": [],
-            "agentPhase": "PASSIVE",
             "scamDetected": False,
-            "finalSent": False,   # 🔒 callback lock
             "intelligence": {
                 "bankAccounts": [],
                 "upiIds": [],
                 "phishingLinks": [],
                 "phoneNumbers": [],
                 "suspiciousKeywords": []
-            }
+            },
+            "agentNotes": "",
+            "finalSent": False
         }
     return sessions[session_id]
