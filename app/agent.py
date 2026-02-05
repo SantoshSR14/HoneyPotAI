@@ -1,75 +1,96 @@
 from app.gemini_client import gemini_generate
 
-DETAILS_MAPPING = {
-    "bankAccounts": "bank account",
-    "upiIds": "UPI ID",
-    "phoneNumbers": "phone number",
-    "phishingLinks": "link",
-    "suspiciousKeywords": "reason"
-}
+# -------------------------------
+# Helper checks
+# -------------------------------
 
 def has_any_intelligence(session):
     intel = session.get("intelligence", {})
     return any(len(v) > 0 for v in intel.values())
 
+
 def should_end_conversation(session):
-    """
-    END if:
-    - 7 or more total messages
-    - At least ONE intelligence item extracted
-    """
     return (
         len(session.get("messages", [])) >= 7
         and has_any_intelligence(session)
     )
 
-def agent_reply(session):
-    history = session.get("messages", [])
-    total_messages = len(history)
 
-    # Build recent conversation
+# -------------------------------
+# Main agent logic
+# -------------------------------
+
+def agent_reply(session):
+    messages = session.get("messages", [])
+    scam_detected = session.get("scamDetected", False)
+
+    # Build last few messages as context
     convo = ""
-    for m in history[-6:]:
+    for m in messages[-6:]:
         convo += f"{m['sender'].upper()}: {m['text']}\n"
 
-    # -------- Decide Agent Phase --------
-    if total_messages < 3:
-        system_prompt = """
-You are a normal person responding casually.
-Keep replies short and natural.
-"""
-
-    elif should_end_conversation(session):
+    # -------------------------------
+    # PHASE 3: ENDING
+    # -------------------------------
+    if should_end_conversation(session):
         system_prompt = """
 End the conversation naturally.
-Sound distracted or unsure.
-Do not ask any more questions.
+Sound distracted, unsure, or busy.
+Do NOT ask any questions.
+Do NOT request any details.
 """
-
-    else:
-        # Ask ONLY ONE soft follow-up, not all details
-        system_prompt = """
-Ask one simple follow-up question.
-Keep it vague and human.
-Do not ask for sensitive details explicitly.
-"""
-
-    # -------- Prompt Gemini --------
-    prompt = f"""
+        prompt = f"""
 Reply only in English.
 
 {system_prompt}
-
-IMPORTANT RULES:
-- Never accuse the sender
-- Never mention scams, police, or fraud
-- Behave like a real human
 
 Conversation:
 {convo}
 
 Reply as USER:
 """
+        return gemini_generate(prompt).strip()[:200]
 
-    reply = gemini_generate(prompt)
-    return reply.strip()[:250] if reply else "Okay."
+    # -------------------------------
+    # PHASE 2: EXTRACTION
+    # (only AFTER scam is detected)
+    # -------------------------------
+    if scam_detected:
+        system_prompt = """
+You suspect something is wrong.
+Casually ask for ONE small clarification that may reveal details.
+Do NOT ask multiple questions.
+Do NOT sound official or threatening.
+"""
+        prompt = f"""
+Reply only in English.
+
+{system_prompt}
+
+Conversation:
+{convo}
+
+Reply as USER:
+"""
+        return gemini_generate(prompt).strip()[:200]
+
+    # -------------------------------
+    # PHASE 1: PASSIVE
+    # (before scam detection)
+    # -------------------------------
+    system_prompt = """
+You are a normal person.
+Respond casually and keep the conversation going.
+Ask neutral questions only.
+"""
+    prompt = f"""
+Reply only in English.
+
+{system_prompt}
+
+Conversation:
+{convo}
+
+Reply as USER:
+"""
+    return gemini_generate(prompt).strip()[:200]
