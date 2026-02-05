@@ -92,14 +92,14 @@ Reply as USER:
 
     # -------- Check if final payload should be sent --------
     if should_send_final_payload(session):
-        final_payload = build_final_payload(session)
-        # Send to GUVI endpoint
-        try:
-            requests.post(GUVI_ENDPOINT, json=final_payload, timeout=5)
-        except Exception as e:
-            # Log failure somewhere if needed
-            print("Error sending final payload:", e)
-        session["agentPhase"] = "DONE"
+    final_payload = build_final_payload(session)
+    print("→ FINAL GUVI PAYLOAD:", final_payload)  # << this is what GUVI will receive
+    try:
+        requests.post(GUVI_ENDPOINT, json=final_payload, timeout=5)
+    except Exception as e:
+        print("Error sending final payload:", e)
+    session["agentPhase"] = "DONE"
+
 
     return reply.strip()[:250] if reply else "Can you explain what this is about?"
 
