@@ -1,9 +1,10 @@
+# session_store.py
 sessions = {}
 
 def get_session(session_id):
     return sessions.setdefault(session_id, {
+        "sessionId": session_id,
         "messages": [],
-        "agentPhase": "PASSIVE",
         "intelligence": {
             "bankAccounts": [],
             "upiIds": [],
@@ -11,5 +12,8 @@ def get_session(session_id):
             "phoneNumbers": [],
             "suspiciousKeywords": []
         },
-        "scamDetected": False
+        "scamDetected": False,
+        "agentActive": False,
+        "engagementComplete": False,
+        "agentNotes": ""
     })
