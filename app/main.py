@@ -6,7 +6,6 @@ import time
 from app.agent import agent_reply
 from app.session_store import get_or_create_session
 from app.callback import send_guvi_callback
-
 API_KEY = sk_test_123456789
 MAX_MESSAGES = 20
 
