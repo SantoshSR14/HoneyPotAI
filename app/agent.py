@@ -5,61 +5,58 @@ def agent_reply(session: dict) -> str:
     phase = session.get("agentPhase", "PASSIVE")
     intelligence = session.get("intelligence", {})
 
-    # -------- BUILD CONTEXT (LAST 6 MESSAGES) --------
+    # -------- BUILD CONTEXT --------
     convo = ""
     for m in history[-6:]:
         sender = m.get("sender", "user")
         text = m.get("text", "")
         convo += f"{sender.upper()}: {text}\n"
 
-    # -------- PHASE PROMPTS --------
+    # -------- CHECK INTELLIGENCE --------
+    intelligence_found = any([
+        intelligence.get("upiIds"),
+        intelligence.get("phoneNumbers"),
+        intelligence.get("phishingLinks"),
+        intelligence.get("bankAccounts")
+    ])
+
+    # -------- PHASE LOGIC --------
 
     if phase == "PASSIVE":
         system_prompt = """
 You are a normal person who just received a message.
-You are unsure if it is genuine or not.
-Ask for clarification naturally without cooperating.
+You are unsure if it is genuine.
+Ask for clarification casually.
 """
-        # RULE: Move only if scam detected elsewhere
         if session.get("scamDetected"):
             session["agentPhase"] = "CONFIRMED_SCAM"
 
     elif phase == "CONFIRMED_SCAM":
         system_prompt = """
-You are slightly concerned but not alarmed.
-Continue the conversation casually.
-Ask what needs to be done and why.
+You are slightly concerned but calm.
+Continue the conversation and ask what needs to be done.
 """
-        # RULE: Move after enough engagement
         if len(history) >= 4:
             session["agentPhase"] = "EXTRACTING"
 
     elif phase == "EXTRACTING":
-        system_prompt = """
-You are continuing the conversation naturally.
-Casually ask for details such as:
-- UPI ID
-- bank details
-- phone number
-- any verification links
-Do not sound suspicious or defensive.
-"""
-        # RULE: Move only if intelligence found
-        if any([
-            intelligence.get("upiIds"),
-            intelligence.get("phoneNumbers"),
-            intelligence.get("phishingLinks"),
-            intelligence.get("bankAccounts")
-        ]):
+        # 🚨 HARD STOP CONDITION
+        if intelligence_found and len(history) > 8:
             session["agentPhase"] = "DONE"
+
+        system_prompt = """
+Continue chatting naturally.
+Casually ask for any details needed to proceed,
+such as UPI ID, phone number, or verification link.
+"""
 
     elif phase == "DONE":
         system_prompt = """
 Politely end the conversation.
-Thank the sender and say you will take care of it later.
-Do not continue asking questions.
+Thank the sender and say you will handle it later.
 """
 
+    # -------- FINAL PROMPT --------
 
     prompt = f"""
 Reply only in English.
@@ -68,7 +65,7 @@ Reply only in English.
 
 IMPORTANT RULES:
 - Never accuse the sender of scam
-- Never mention police, cybercrime, fraud, or investigation
+- Never mention police, cybercrime, or fraud
 - Sound human, emotional, and realistic
 - Keep replies short (1–2 sentences)
 
