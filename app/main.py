@@ -14,40 +14,57 @@ async def honeypot_message(
     req: HoneypotRequest,
     x_api_key: str = Header(..., alias="x-api-key")
 ):
-    # 🔐 API key check
+    # 🔐 API Key validation
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    session_id = req.sessionId
-    session = get_session(session_id)
+    session = get_session(req.sessionId)
 
-    # 🧠 Store user message
+    # 🧠 Load conversation history (SPEC COMPLIANT)
+    if req.conversationHistory:
+        session["messages"] = [
+            {"sender": m.sender, "text": m.text, "timestamp": m.timestamp}
+            for m in req.conversationHistory
+        ]
+
+    # ➕ Add latest message
     session["messages"].append({
-        "sender": "user",
+        "sender": req.message.sender,
         "text": req.message.text,
         "timestamp": req.message.timestamp
     })
 
-    # 🔍 Extract intelligence
-    extract_intelligence(req.message.text, session["intelligence"])
-
-    # 🕵️ Scam detection (only once)
+    # 🔍 Scam detection (only once)
     if not session["scamDetected"]:
         session["scamDetected"] = detect_scam(req.message.text)
+        session["agentActive"] = session["scamDetected"]
 
-    # 🤖 Agent reply
-    reply = agent_reply(session)
+    # 🤖 Agent only activates after scam detected
+    if session["agentActive"]:
+        extract_intelligence(req.message.text, session["intelligence"])
+        reply = agent_reply(session)
+    else:
+        reply = "Okay."
 
-    # 🧾 Store agent reply
+    # 🧾 Store agent reply as USER (persona)
     session["messages"].append({
-        "sender": "agent",
+        "sender": "user",
         "text": reply,
         "timestamp": req.message.timestamp
     })
 
-    # 📤 Final callback to GUVI
-    if session["scamDetected"] and len(session["messages"]) >= 15:
-        send_final_callback(session_id, session)
+    # ✅ Engagement completion logic (INTELLIGENT, NOT COUNT-BASED)
+    if (
+        session["scamDetected"]
+        and len(session["messages"]) >= 10
+        and any(session["intelligence"].values())
+    ):
+        session["engagementComplete"] = True
+
+    # 📤 Mandatory GUVI callback
+    if session["engagementComplete"]:
+        send_final_callback(req.sessionId, session)
+        session["agentNotes"] = "Scammer used urgency and payment redirection tactics"
 
     return HoneypotResponse(
         status="success",
