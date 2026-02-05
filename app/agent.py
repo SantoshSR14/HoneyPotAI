@@ -56,8 +56,9 @@ Keep your reply short (1–2 sentences) and realistic.
         # No missing details left, polite ending
         phase = "DONE"
         system_prompt = """
-Now you have done your job. Politely end the conversation.
-Thank the sender and say you will do the job.
+Politely slow the conversation and stop responding naturally.
+Sound unsure or distracted, like a real person.
+
 """
     
     # -------- Build final prompt for Gemini --------
