@@ -1,4 +1,4 @@
-from config import GEMINI_API_KEY
+from app.config import GEMINI_API_KEY
 
 def gemini_generate(prompt: str) -> str:
     try:
