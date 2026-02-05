@@ -1,9 +1,11 @@
 from app.gemini_client import gemini_generate
-def agent_reply(session):
+
+def agent_reply(session: dict) -> str:
     history = session["messages"]
     phase = session.get("agentPhase", "PASSIVE")
+    intelligence = session.get("intelligence", {})
 
-    # Build conversation safely
+    # -------- BUILD CONTEXT (LAST 6 MESSAGES) --------
     convo = ""
     for m in history[-6:]:
         sender = m.get("sender", "user")
@@ -14,41 +16,50 @@ def agent_reply(session):
 
     if phase == "PASSIVE":
         system_prompt = """
-You are a normal person. You received a message.
-You have to get the details of the message and find out if it's a scam
-or a legit message.
-Do NOT cooperate yet.
+You are a normal person who just received a message.
+You are unsure if it is genuine or not.
+Ask for clarification naturally without cooperating.
 """
-        next_phase = "CONFIRMED_SCAM"
+        # RULE: Move only if scam detected elsewhere
+        if session.get("scamDetected"):
+            session["agentPhase"] = "CONFIRMED_SCAM"
 
     elif phase == "CONFIRMED_SCAM":
         system_prompt = """
-You are not worried. You have to just keep on building 
-the converstaion casually as if you have not sensed that it 
-is a scam. Ask what needs to be done.
+You are slightly concerned but not alarmed.
+Continue the conversation casually.
+Ask what needs to be done and why.
 """
-      
-
-        next_phase = "EXTRACTING"
+        # RULE: Move after enough engagement
+        if len(history) >= 4:
+            session["agentPhase"] = "EXTRACTING"
 
     elif phase == "EXTRACTING":
         system_prompt = """
-You are now going to start extarcting the details about the 
-scammers. Ask for bank account details, UPI ID, phone number, account details,
-and any links if possible based on the context of the message.
-In this phase, you shouldn't reveal you know it's a scam. Do 
-it casually.
+You are continuing the conversation naturally.
+Casually ask for details such as:
+- UPI ID
+- bank details
+- phone number
+- any verification links
+Do not sound suspicious or defensive.
 """
-        next_phase = "DONE"
+        # RULE: Move only if intelligence found
+        if any([
+            intelligence.get("upiIds"),
+            intelligence.get("phoneNumbers"),
+            intelligence.get("phishingLinks"),
+            intelligence.get("bankAccounts")
+        ]):
+            session["agentPhase"] = "DONE"
 
     elif phase == "DONE":
         system_prompt = """
-Now you have done the agent's job. Politely end the conversation.
-Thank the sender and say you won't be able to proceed further.
+Politely end the conversation.
+Thank the sender and say you will take care of it later.
+Do not continue asking questions.
 """
-        next_phase = "DONE"
 
-    # -------- FINAL PROMPT --------
 
     prompt = f"""
 Reply only in English.
@@ -57,7 +68,7 @@ Reply only in English.
 
 IMPORTANT RULES:
 - Never accuse the sender of scam
-- Never mention police, cybercrime, or fraud
+- Never mention police, cybercrime, fraud, or investigation
 - Sound human, emotional, and realistic
 - Keep replies short (1–2 sentences)
 
@@ -69,8 +80,4 @@ Reply as USER:
 
     reply = gemini_generate(prompt)
 
-    if reply:
-        session["agentPhase"] = next_phase
-        return reply.strip()[:250]
-
-    return "Can you explain what this is about?"
+    return reply.strip()[:250] if reply else "Can you explain a bit more?"
