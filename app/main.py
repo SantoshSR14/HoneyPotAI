@@ -1,3 +1,11 @@
+# app/main.py
+from fastapi import FastAPI, Request
+from app.agent import agent_reply, DETAILS_MAPPING  # import your agent code
+
+app = FastAPI()  # <-- Must be here at top level
+
+sessions = {}  # in-memory session store
+
 @app.post("/api/honeypot/message")
 async def honeypot_message(req: Request):
     try:
@@ -6,9 +14,9 @@ async def honeypot_message(req: Request):
         user_message = data.get("text")
 
         if not session_id or not user_message:
-            return {"status": "error", "message": "sessionId and text are required"}
+            return {"status": "error", "message": "sessionId and text required"}
 
-        # Initialize session if not exists
+        # Initialize session
         if session_id not in sessions:
             sessions[session_id] = {
                 "sessionId": session_id,
@@ -33,6 +41,5 @@ async def honeypot_message(req: Request):
         return {"status": "success", "reply": agent_text}
 
     except Exception as e:
-        # Catch any error and return as JSON
         print("Internal Server Error:", e)
         return {"status": "error", "message": str(e)}
