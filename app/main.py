@@ -1,63 +1,86 @@
+from fastapi import FastAPI, Header, HTTPException
+from app.models import HoneypotRequest, HoneypotResponse
+from app.config import API_KEY
+from app.scam_detector import detect_scam
 from fastapi import FastAPI, Request
-from app.agent import agent_reply, DETAILS_MAPPING
-import requests
-import os
-
-GUVI_ENDPOINT = os.getenv("GUVI_ENDPOINT", "https://guvi-endpoint.example.com")  # replace with actual
+from app.agent import agent_reply
+from app.intelligence import extract_intelligence
+from app.session_store import get_session
+from app.callback import send_final_callback
 
 app = FastAPI()
+
+# Simple in-memory session store (for demo)
 sessions = {}
 
-def send_final_payload_to_guvi(session):
-    payload = {
-        "sessionId": session["sessionId"],
-        "scamDetected": session.get("scamDetected", True),
-        "totalMessagesExchanged": len(session["messages"]),
-        "extractedIntelligence": session["collected_details"],
-        "agentNotes": session.get("agentNotes", "")
-    }
-    print("→ FINAL GUVI PAYLOAD:", payload)  # debug print
-    try:
-        requests.post(GUVI_ENDPOINT, json=payload, timeout=5)
-    except Exception as e:
-        print("Error sending final payload:", e)
-
+@app.post("/", response_model=HoneypotResponse)
+def honeypot(
+    req: HoneypotRequest,
+    x_api_key: str = Header(..., alias="x-api-key")  # ✅ FIX
+):
+    # 🔐 API Key validation
+    print("ENV API KEY:", repr(API_KEY))
 @app.post("/api/honeypot/message")
 async def honeypot_message(req: Request):
-    try:
-        data = await req.json()
+    data = await req.json()
+    session_id = data.get("sessionId")
+    user_message = data.get("text")
 
-        session_id = data.get("sessionId")
-        message_obj = data.get("message", {})
-        user_message = message_obj.get("text")
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
+    # Initialize session if first message
+    if session_id not in sessions:
+        sessions[session_id] = {
+            "sessionId": session_id,
+            "messages": [],
+            "agentPhase": "PASSIVE",
+            "collected_details": {},
+            "scamDetected": True,  # or set based on your detection logic
+            "agentNotes": ""
+        }
 
-        if not session_id or not user_message:
-            return {"status": "error", "message": "sessionId and text required"}
+    # 📦 Session handling
+    session = get_session(req.sessionId)
+    session = sessions[session_id]
 
-        # Initialize session if not exists
-        if session_id not in sessions:
-            sessions[session_id] = {
-                "sessionId": session_id,
-                "messages": [],
-                "agentPhase": "PASSIVE",
-                "collected_details": {k: [] for k in DETAILS_MAPPING.keys()},
-                "scamDetected": True,
-                "agentNotes": ""
-            }
+    # Store incoming message
+    session["messages"].append(req.message.dict())
+    # Append user message to history
+    session["messages"].append({"sender": "user", "text": user_message})
 
-        session = sessions[session_id]
+    # Extract intelligence
+    extract_intelligence(req.message.text, session["intelligence"])
+    # Generate agent reply
+    agent_text = agent_reply(session)
 
-        # Append user message
-        session["messages"].append({"sender": "user", "text": user_message})
+    # Detect scam (once)
+    if not session["scamDetected"]:
+        session["scamDetected"] = detect_scam(req.message.text)
+    # Append agent reply to history
+    session["messages"].append({"sender": "agent", "text": agent_text})
 
-        # Generate agent reply
-        agent_text = agent_reply(session)
+    # Agent reply
+    reply = agent_reply(session)
 
-        # Append agent reply
-        session["messages"].append({"sender": "agent", "text": agent_text})
+    # Store agent reply
+    session["messages"].append({
+        "sender": "user",
+        "text": reply,
+        "timestamp": req.message.timestamp
+    })
 
-        return {"status": "success", "reply": agent_text}
+    # Debug logs (safe)
+    print("\n--- CONVERSATION HISTORY ---")
+    for m in session["messages"]:
+        print(f"{m['sender']}: {m['text']}")
+    print("----------------------------\n")
 
-    except Exception as e:
-        print("Internal Server Error:", e)
-        return {"status": "error", "message": str(e)}
+    # 📤 Final callback (mandatory for GUVI)
+    if session["scamDetected"] and len(session["messages"]) >= 15:
+        send_final_callback(req.sessionId, session)
+
+    return HoneypotResponse(
+        status="success",
+        reply=reply
+    )
+    return {"status": "success", "reply": agent_text}
