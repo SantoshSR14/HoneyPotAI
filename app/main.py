@@ -1,22 +1,40 @@
-# app/main.py
 from fastapi import FastAPI, Request
-from app.agent import agent_reply, DETAILS_MAPPING  # import your agent code
+from app.agent import agent_reply, DETAILS_MAPPING
+import requests
+import os
 
-app = FastAPI()  # <-- Must be here at top level
+GUVI_ENDPOINT = os.getenv("GUVI_ENDPOINT", "https://guvi-endpoint.example.com")  # replace with actual
 
-sessions = {}  # in-memory session store
+app = FastAPI()
+sessions = {}
 
-@app.post("/")
+def send_final_payload_to_guvi(session):
+    payload = {
+        "sessionId": session["sessionId"],
+        "scamDetected": session.get("scamDetected", True),
+        "totalMessagesExchanged": len(session["messages"]),
+        "extractedIntelligence": session["collected_details"],
+        "agentNotes": session.get("agentNotes", "")
+    }
+    print("→ FINAL GUVI PAYLOAD:", payload)  # debug print
+    try:
+        requests.post(GUVI_ENDPOINT, json=payload, timeout=5)
+    except Exception as e:
+        print("Error sending final payload:", e)
+
+@app.post("/api/honeypot/message")
 async def honeypot_message(req: Request):
     try:
         data = await req.json()
+
         session_id = data.get("sessionId")
-        user_message = data.get("text")
+        message_obj = data.get("message", {})
+        user_message = message_obj.get("text")
 
         if not session_id or not user_message:
             return {"status": "error", "message": "sessionId and text required"}
 
-        # Initialize session
+        # Initialize session if not exists
         if session_id not in sessions:
             sessions[session_id] = {
                 "sessionId": session_id,
