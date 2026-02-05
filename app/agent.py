@@ -1,4 +1,4 @@
-from gemini_client import gemini_generate
+from app.gemini_client import gemini_generate
 def agent_reply(session):
     history = session["messages"]
     phase = session.get("agentPhase", "PASSIVE")
