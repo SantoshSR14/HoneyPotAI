@@ -7,19 +7,20 @@ def extract_intelligence(text: str, intelligence: dict):
     upi_matches = re.findall(r'\b[\w.\-]{2,}@[a-z]{2,}\b', text_l)
     intelligence["upiIds"].extend(upi_matches)
 
-    # Phone numbers (India-focused)
-    phone_matches = re.findall(r'\b(?:\+91[-\s]?)?[6-9]\d{9}\b', text)
+    # Phone numbers (more permissive)
+    phone_matches = re.findall(
+        r'\b(?:\+91[-\s]?)?\d{10}\b',
+        text
+    )
     intelligence["phoneNumbers"].extend(phone_matches)
 
-    # Links
-    link_matches = re.findall(r'https?://[^\s]+', text)
+    # Links (with or without protocol)
+    link_matches = re.findall(
+        r'\b(?:https?://|www\.)[^\s]+\b|\b[a-zA-Z0-9.-]+\.(?:com|in|net|org|co)\b',
+        text
+    )
     intelligence["phishingLinks"].extend(link_matches)
 
-    # Bank account (very loose on purpose)
+    # Bank account numbers (loose)
     bank_matches = re.findall(r'\b\d{9,18}\b', text)
     intelligence["bankAccounts"].extend(bank_matches)
-
-    # Keywords
-    for k in ["urgent", "verify", "blocked", "suspended"]:
-        if k in text_l and k not in intelligence["suspiciousKeywords"]:
-            intelligence["suspiciousKeywords"].append(k)
