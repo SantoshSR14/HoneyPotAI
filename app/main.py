@@ -10,7 +10,7 @@ from app.callback import send_final_callback
 
 app = FastAPI()
 
-@app.post("/api/honeypot", response_model=HoneypotResponse)
+@app.post("/", response_model=HoneypotResponse)
 def honeypot(req: HoneypotRequest, x_api_key: str = Header(...)):
 
 
