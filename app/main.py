@@ -6,7 +6,12 @@ import time
 from app.agent import agent_reply
 from app.session_store import get_or_create_session
 from app.callback import send_guvi_callback
-API_KEY = "sk_test_123456789"
+
+# -----------------------------
+# CONFIG
+# -----------------------------
+
+API_KEY = "sk_test_123456789"   # MUST be a string
 MAX_MESSAGES = 20
 
 app = FastAPI()
@@ -38,14 +43,14 @@ def honeypot_message(
     req: MessageRequest,
     x_api_key: str = Header(None)
 ):
-    # ---- API KEY CHECK ----
+    # ---- AUTH ----
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
     # ---- SESSION ----
     session = get_or_create_session(req.sessionId)
 
-    # ---- SAFETY INIT (CRITICAL) ----
+    # ---- HARD SAFETY INITIALIZATION ----
     session.setdefault("messages", [])
     session.setdefault("scamDetected", False)
     session.setdefault("finalSent", False)
@@ -57,7 +62,7 @@ def honeypot_message(
         "suspiciousKeywords": []
     })
 
-    # ---- MERGE HISTORY ONCE ----
+    # ---- MERGE HISTORY (ONLY ON FIRST CALL) ----
     if not session["messages"] and req.conversationHistory:
         for msg in req.conversationHistory:
             session["messages"].append({
@@ -73,24 +78,37 @@ def honeypot_message(
         "timestamp": req.message.timestamp
     })
 
-    # ---- AGENT REPLY ----
-    reply = agent_reply(session)
+    # ---- AGENT CALL (CRASH SAFE) ----
+    try:
+        reply = agent_reply(session)
+    except Exception as e:
+        print("❌ AGENT CRASH:", str(e))
+        reply = "Can you explain more?"
 
-    # ---- FAILSAFE (NO 500s) ----
     if not reply:
         reply = "Can you explain more?"
 
-    # ---- APPEND AGENT MESSAGE ----
+    # ---- APPEND AGENT REPLY ----
     session["messages"].append({
         "sender": "user",
         "text": reply,
         "timestamp": int(time.time() * 1000)
     })
 
+    # ---- INTELLIGENCE SAFETY (NO KEY ERRORS) ----
+    if not isinstance(session.get("intelligence"), dict):
+        session["intelligence"] = {
+            "bankAccounts": [],
+            "upiIds": [],
+            "phishingLinks": [],
+            "phoneNumbers": [],
+            "suspiciousKeywords": []
+        }
+
     # ---- FINAL GUVI CALLBACK (ONCE ONLY) ----
     if (
-        not session["finalSent"]
-        and session["scamDetected"] is True
+        not session.get("finalSent")
+        and session.get("scamDetected") is True
         and len(session["messages"]) >= MAX_MESSAGES
         and any(session["intelligence"].values())
     ):
