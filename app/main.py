@@ -1,74 +1,64 @@
-from fastapi import FastAPI, Request
-from app.session_store import get_session
+from fastapi import FastAPI
+from pydantic import BaseModel
 from app.agent import agent_reply
-from app.intelligence import extract_intelligence
 from app.callback import send_guvi_callback
 
-app = FastAPI()   # 🔴 THIS WAS MISSING
+app = FastAPI()
+
+class MessageRequest(BaseModel):
+    sessionId: str
+    message: str
+
+
+# In-memory session store (simple & sufficient)
+SESSIONS = {}
 
 
 @app.post("/api/honeypot/message")
-async def honeypot_message(req: Request):
-    body = await req.json()
-
-    session_id = body["sessionId"]
-    message = body["message"]
-
-    session = get_session(session_id)
-
-    # 1️⃣ Store incoming message (from scammer)
-    session["messages"].append({
-        "sender": message["sender"],
-        "text": message["text"],
-        "timestamp": message["timestamp"]
+def honeypot_message(req: MessageRequest):
+    session = SESSIONS.setdefault(req.sessionId, {
+        "sessionId": req.sessionId,
+        "messages": [],
+        "agentPhase": "PASSIVE",
+        "scamDetected": False,
+        "finalSent": False,
+        "intelligence": {
+            "upiIds": [],
+            "phoneNumbers": [],
+            "phishingLinks": [],
+            "bankAccounts": [],
+            "suspiciousKeywords": []
+        }
     })
 
-    # 2️⃣ Scam detection (simple trigger, already works)
-    if not session["scamDetected"]:
-        if "urgent" in message["text"].lower():
-            session["scamDetected"] = True
+    # Add user message
+    session["messages"].append({
+        "sender": "scammer",
+        "text": req.message
+    })
 
-    # 3️⃣ Extract intelligence from scammer text
-    extract_intelligence(
-        message["text"],
-        session["intelligence"]
-    )
+    # Very basic scam signal (you can improve later)
+    if any(k in req.message.lower() for k in ["urgent", "pay", "verify", "blocked"]):
+        session["scamDetected"] = True
+        session["intelligence"]["suspiciousKeywords"].append("urgent")
 
-    # 4️⃣ HARD STOP + GUVI CALLBACK (ONCE)
+    # Generate agent reply
+    reply = agent_reply(session)
+
+    # Add agent reply to history
+    session["messages"].append({
+        "sender": "agent",
+        "text": reply
+    })
+
+    # 🚨 FINAL GUVI CALLBACK (ONLY ONCE)
     if (
-        session["scamDetected"]
-        and not session["finalSent"]
+        not session["finalSent"]
+        and session["scamDetected"]
         and len(session["messages"]) >= 7
         and any(session["intelligence"].values())
     ):
-        print("🚨 SENDING FINAL GUVI CALLBACK 🚨")
-
-        payload = {
-            "sessionId": session_id,
-            "scamDetected": True,
-            "totalMessagesExchanged": len(session["messages"]),
-            "extractedIntelligence": session["intelligence"],
-            "agentNotes": "Scammer used urgency and payment redirection tactics"
-        }
-
-        print(payload)
-        send_guvi_callback(payload)
-
         session["finalSent"] = True
+        send_guvi_callback(session)
 
-    # 5️⃣ Agent reply (only if not finished)
-    reply = "Okay."
-
-    if not session["finalSent"]:
-        reply = agent_reply(session)
-
-        session["messages"].append({
-            "sender": "user",
-            "text": reply,
-            "timestamp": message["timestamp"]
-        })
-
-    return {
-        "status": "success",
-        "reply": reply
-    }
+    return {"reply": reply}
