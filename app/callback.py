@@ -9,5 +9,21 @@ def send_final_callback(session_id, session_data):
         "extractedIntelligence": session_data["intelligence"],
         "agentNotes": "Scammer used urgency and financial threats"
     }
+    print("🚨 SENDING FINAL GUVI CALLBACK 🚨")
+    print(payload)
 
-    requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
+    try:
+        response = requests.post(
+            GUVI_CALLBACK_URL,
+            json=payload,
+            timeout=5
+        )
+
+        print("✅ GUVI RESPONSE STATUS:", response.status_code)
+        print("✅ GUVI RESPONSE BODY:", response.text)
+
+    except Exception as e:
+        print("❌ GUVI CALLBACK ERROR:", e)
+
+
+  #  requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
