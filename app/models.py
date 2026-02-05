@@ -1,8 +1,9 @@
+# models.py
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 class Message(BaseModel):
-    sender: str
+    sender: Literal["scammer", "user"]
     text: str
     timestamp: int
 
@@ -14,7 +15,7 @@ class Metadata(BaseModel):
 class HoneypotRequest(BaseModel):
     sessionId: str
     message: Message
-    conversationHistory: List[Message]
+    conversationHistory: List[Message] = []
     metadata: Optional[Metadata]
 
 class HoneypotResponse(BaseModel):
