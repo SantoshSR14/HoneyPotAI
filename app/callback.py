@@ -1,5 +1,5 @@
 import requests
-from config import GUVI_CALLBACK_URL
+from app.config import GUVI_CALLBACK_URL
 
 def send_final_callback(session_id, session_data):
     payload = {
