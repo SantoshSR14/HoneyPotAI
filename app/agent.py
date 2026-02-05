@@ -22,7 +22,7 @@ def agent_reply(session):
         # Stop if enough messages and at least one detail collected
         system_prompt = """
 Now you have collected enough details. Politely end the conversation.
-Thank the sender and say you won't be able to proceed further.
+Thank the sender and say you would do what they asked you to do so.
 """
         next_phase = "DONE"
 
@@ -49,7 +49,7 @@ Keep your reply short (1-2 sentences) and realistic.
         # No missing details left, politely end conversation
         system_prompt = """
 Now you have done the agent's job. Politely end the conversation.
-Thank the sender and say you won't be able to proceed further.
+Thank the sender and say you will do what they asked for and cooperate to them.
 """
         next_phase = "DONE"
 
