@@ -7,8 +7,10 @@ def send_final_callback(session_id, session_data):
         "scamDetected": True,
         "totalMessagesExchanged": len(session_data["messages"]),
         "extractedIntelligence": session_data["intelligence"],
-        "agentNotes": "Scammer used urgency and financial threats"
+        "agentNotes": "Scammer used urgency and payment redirection tactics"
     }
+
+    # 🔍 DEBUG — SEE EXACTLY WHAT IS SENT TO GUVI
     print("🚨 SENDING FINAL GUVI CALLBACK 🚨")
     print(payload)
 
@@ -24,6 +26,3 @@ def send_final_callback(session_id, session_data):
 
     except Exception as e:
         print("❌ GUVI CALLBACK ERROR:", e)
-
-
-  #  requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
