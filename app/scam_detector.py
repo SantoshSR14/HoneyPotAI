@@ -1,4 +1,4 @@
-from gemini_client import gemini_generate
+from app.gemini_client import gemini_generate
 
 SCAM_KEYWORDS = [
     "blocked", "urgent", "verify", "suspended",
