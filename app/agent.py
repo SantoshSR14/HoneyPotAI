@@ -57,7 +57,7 @@ Keep your reply short (1–2 sentences) and realistic.
         phase = "DONE"
         system_prompt = """
 Now you have done your job. Politely end the conversation.
-Thank the sender and say you won't be able to proceed further.
+Thank the sender and say you will do the job.
 """
     
     # -------- Build final prompt for Gemini --------
@@ -92,13 +92,13 @@ Reply as USER:
 
     # -------- Check if final payload should be sent --------
     if should_send_final_payload(session):
-    final_payload = build_final_payload(session)
-    print("→ FINAL GUVI PAYLOAD:", final_payload)  # << this is what GUVI will receive
-    try:
-        requests.post(GUVI_ENDPOINT, json=final_payload, timeout=5)
-    except Exception as e:
-        print("Error sending final payload:", e)
-    session["agentPhase"] = "DONE"
+        final_payload = build_final_payload(session)
+        print("→ FINAL GUVI PAYLOAD:", final_payload)  # << this is what GUVI will receive
+        try:
+            requests.post(GUVI_ENDPOINT, json=final_payload, timeout=5)
+        except Exception as e:
+            print("Error sending final payload:", e)
+        session["agentPhase"] = "DONE"
 
 
     return reply.strip()[:250] if reply else "Can you explain what this is about?"
