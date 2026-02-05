@@ -1,12 +1,12 @@
 from fastapi import FastAPI, Header, HTTPException
 from requests import session
-from models import HoneypotRequest, HoneypotResponse
-from config import API_KEY
-from scam_detector import detect_scam
-from agent import agent_reply
-from intelligence import extract_intelligence
-from session_store import get_session
-from callback import send_final_callback
+from app.models import HoneypotRequest, HoneypotResponse
+from app.config import API_KEY
+from app.scam_detector import detect_scam
+from app.agent import agent_reply
+from app.intelligence import extract_intelligence
+from app.session_store import get_session
+from app.callback import send_final_callback
 
 app = FastAPI()
 
