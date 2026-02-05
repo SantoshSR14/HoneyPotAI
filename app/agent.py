@@ -1,7 +1,7 @@
 # app/agent.py
 
 import os
-import google.generativeai as genai
+from google import genai
 
 DETAILS_LIST = [
     "bank account",
@@ -12,10 +12,10 @@ DETAILS_LIST = [
 ]
 
 # -----------------------------
-# Gemini Setup
+# Gemini Client Setup
 # -----------------------------
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-1.5-flash")
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+MODEL_NAME = "gemini-1.5-flash"
 
 
 def agent_reply(session: dict) -> str:
@@ -25,13 +25,16 @@ def agent_reply(session: dict) -> str:
 
     session.setdefault("agentPhase", "PASSIVE")
     session.setdefault("scamDetected", True)
-    session.setdefault("intelligence", {
-        "bankAccounts": [],
-        "upiIds": [],
-        "phoneNumbers": [],
-        "phishingLinks": [],
-        "suspiciousKeywords": []
-    })
+    session.setdefault(
+        "intelligence",
+        {
+            "bankAccounts": [],
+            "upiIds": [],
+            "phoneNumbers": [],
+            "phishingLinks": [],
+            "suspiciousKeywords": []
+        }
+    )
 
     # -----------------------------
     # Build conversation context
@@ -43,13 +46,13 @@ def agent_reply(session: dict) -> str:
     missing_details = [d for d in DETAILS_LIST if d not in collected_details]
 
     # -----------------------------
-    # Phase Decision (UNCHANGED LOGIC)
+    # Phase decision (UNCHANGED)
     # -----------------------------
     if total_messages >= 20 and collected_details:
         system_prompt = """
 You have enough information now.
 Politely end the conversation.
-Thank them and say you will proceed as requested.
+Thank them and say you will proceed.
 """
         session["agentPhase"] = "DONE"
 
@@ -58,15 +61,15 @@ Thank them and say you will proceed as requested.
             system_prompt = """
 You are a normal person replying casually.
 Do NOT ask for sensitive information yet.
-Keep it natural and human.
+Be natural and calm.
 """
             session["agentPhase"] = "PASSIVE"
         else:
             detail = missing_details[0]
             system_prompt = f"""
 You want to understand the situation better.
-Casually ask for the {detail} as part of the conversation.
-Do NOT mention scams, police, or verification.
+Casually ask for the {detail}.
+Do NOT sound suspicious.
 """
             session["agentPhase"] = "EXTRACTING"
 
@@ -78,13 +81,13 @@ Politely end the conversation.
         session["agentPhase"] = "DONE"
 
     # -----------------------------
-    # Gemini Prompt (THIS WAS BROKEN BEFORE)
+    # Gemini Prompt (LLM CORE)
     # -----------------------------
     prompt = f"""
 You are a real human chatting naturally over SMS.
 Never reveal you are an AI.
-Never accuse the sender of fraud.
-Never mention police, cybercrime, or security teams.
+Never accuse the sender.
+Never mention scams, police, or security.
 
 SYSTEM INSTRUCTION:
 {system_prompt}
@@ -96,14 +99,17 @@ Reply naturally in 1–2 sentences.
 """
 
     try:
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt
+        )
         reply = response.text.strip()
-    except Exception:
-        # Safe fallback — NEVER crash server
-        reply = "Okay, can you tell me a bit more?"
+    except Exception as e:
+        # Hard safety fallback — never crash
+        reply = "Okay, can you explain a bit more?"
 
     # -----------------------------
-    # Track extracted details (unchanged)
+    # Track collected details (UNCHANGED)
     # -----------------------------
     for d in missing_details:
         if d.lower() in reply.lower():
