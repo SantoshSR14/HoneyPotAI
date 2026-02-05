@@ -3,9 +3,15 @@ from app.gemini_client import gemini_generate
 def agent_reply(session: dict) -> str:
     history = session["messages"]
     phase = session.get("agentPhase", "PASSIVE")
-    intelligence = session.get("intelligence", {})
+    intelligence = session.setdefault("intelligence", {
+        "upiIds": [],
+        "phoneNumbers": [],
+        "phishingLinks": [],
+        "bankAccounts": [],
+        "suspiciousKeywords": []
+    })
 
-    # -------- BUILD CONTEXT --------
+    # -------- BUILD CONTEXT (LAST 6 MESSAGES) --------
     convo = ""
     for m in history[-6:]:
         sender = m.get("sender", "user")
@@ -20,13 +26,31 @@ def agent_reply(session: dict) -> str:
         intelligence.get("bankAccounts")
     ])
 
+    # -------- BUILD MEMORY-AWARE PROMPT --------
+    missing_items = []
+    if not intelligence.get("upiIds"):
+        missing_items.append("UPI ID")
+    if not intelligence.get("phoneNumbers"):
+        missing_items.append("phone number")
+    if not intelligence.get("phishingLinks"):
+        missing_items.append("any verification link")
+    if not intelligence.get("bankAccounts"):
+        missing_items.append("bank account details")
+
+    if missing_items:
+        missing_prompt = (
+            "Casually try to ask for: " + ", ".join(missing_items) + "."
+        )
+    else:
+        missing_prompt = "You have collected all possible intelligence. Politely end the conversation."
+
     # -------- PHASE LOGIC --------
 
     if phase == "PASSIVE":
         system_prompt = """
 You are a normal person who just received a message.
 You are unsure if it is genuine.
-Ask for clarification casually.
+Ask for clarification casually without cooperating.
 """
         if session.get("scamDetected"):
             session["agentPhase"] = "CONFIRMED_SCAM"
@@ -34,30 +58,28 @@ Ask for clarification casually.
     elif phase == "CONFIRMED_SCAM":
         system_prompt = """
 You are slightly concerned but calm.
-Continue the conversation and ask what needs to be done.
+Continue the conversation naturally.
 """
         if len(history) >= 4:
             session["agentPhase"] = "EXTRACTING"
 
     elif phase == "EXTRACTING":
-        # 🚨 HARD STOP CONDITION
+        system_prompt = f"""
+Continue chatting naturally.
+{missing_prompt}
+"""
+        # HARD STOP CONDITION
         if intelligence_found and len(history) > 8:
             session["agentPhase"] = "DONE"
-
-        system_prompt = """
-Continue chatting naturally.
-Casually ask for any details needed to proceed,
-such as UPI ID, phone number, or verification link.
-"""
 
     elif phase == "DONE":
         system_prompt = """
 Politely end the conversation.
 Thank the sender and say you will handle it later.
+Do not ask any more questions.
 """
 
     # -------- FINAL PROMPT --------
-
     prompt = f"""
 Reply only in English.
 
