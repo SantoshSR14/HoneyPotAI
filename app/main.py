@@ -16,6 +16,8 @@ def honeypot(
     x_api_key: str = Header(..., alias="x-api-key")  # ✅ FIX
 ):
     # 🔐 API Key validation
+    print("ENV API KEY:", repr(API_KEY))
+
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
