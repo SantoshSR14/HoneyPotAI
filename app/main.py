@@ -6,7 +6,7 @@ app = FastAPI()
 # Simple in-memory session store (for demo)
 sessions = {}
 
-@app.post("/api/honeypot/message")
+@app.post("/")
 async def honeypot_message(req: Request):
     data = await req.json()
     session_id = data.get("sessionId")
