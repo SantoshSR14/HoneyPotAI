@@ -28,7 +28,7 @@ def agent_reply(session):
     session["collected_details"] = collected_details
 
     # -------- STOP CONDITION (YOUR RULE) --------
-    if total_messages >= 7 and collected_details:
+    if total_messages >= 15 and collected_details:
         system_prompt = """
 Now you have collected enough details.
 Politely end the conversation.
