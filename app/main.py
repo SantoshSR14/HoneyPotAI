@@ -2,12 +2,12 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import time
-
+from app.config import API_KEY
 from app.agent import agent_reply
 from app.session_store import get_or_create_session
 from app.callback import send_guvi_callback
 
-API_KEY = "sk_test_123456789"
+#API_KEY = "sk_test_123456789"
 MAX_MESSAGES = 20
 
 app = FastAPI()
