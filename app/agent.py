@@ -1,96 +1,113 @@
 from app.gemini_client import gemini_generate
 
-# -------------------------------
-# Helper checks
-# -------------------------------
+def agent_reply(session: dict) -> str:
+    # ---------------------------
+    # SESSION STATE
+    # ---------------------------
+    history = session.setdefault("messages", [])
+    phase = session.setdefault("agentPhase", "PASSIVE")
 
-def has_any_intelligence(session):
-    intel = session.get("intelligence", {})
-    return any(len(v) > 0 for v in intel.values())
+    intelligence = session.setdefault("intelligence", {
+        "upiIds": [],
+        "phoneNumbers": [],
+        "phishingLinks": [],
+        "bankAccounts": [],
+        "suspiciousKeywords": []
+    })
 
-
-def should_end_conversation(session):
-    return (
-        len(session.get("messages", [])) >= 7
-        and has_any_intelligence(session)
-    )
-
-
-# -------------------------------
-# Main agent logic
-# -------------------------------
-
-def agent_reply(session):
-    messages = session.get("messages", [])
     scam_detected = session.get("scamDetected", False)
 
-    # Build last few messages as context
+    # ---------------------------
+    # HELPER CHECKS
+    # ---------------------------
+    intelligence_found = any(len(v) > 0 for v in intelligence.values())
+    total_messages = len(history)
+
+    # 🔴 HARD STOP CONDITION
+    if total_messages >= 7 and intelligence_found:
+        session["agentPhase"] = "DONE"
+
+    # ---------------------------
+    # BUILD CONTEXT (LAST 6 MSGS)
+    # ---------------------------
     convo = ""
-    for m in messages[-6:]:
-        convo += f"{m['sender'].upper()}: {m['text']}\n"
+    for m in history[-6:]:
+        sender = m.get("sender", "user")
+        convo += f"{sender.upper()}: {m.get('text','')}\n"
 
-    # -------------------------------
-    # PHASE 3: ENDING
-    # -------------------------------
-    if should_end_conversation(session):
+    # ---------------------------
+    # WHAT IS STILL MISSING
+    # ---------------------------
+    missing_items = []
+    if not intelligence["upiIds"]:
+        missing_items.append("UPI ID")
+    if not intelligence["phoneNumbers"]:
+        missing_items.append("phone number")
+    if not intelligence["phishingLinks"]:
+        missing_items.append("verification link")
+    if not intelligence["bankAccounts"]:
+        missing_items.append("bank account details")
+
+    if missing_items:
+        missing_prompt = "Casually try to ask for: " + ", ".join(missing_items) + "."
+    else:
+        missing_prompt = "You have collected enough information. End the conversation."
+
+    # ---------------------------
+    # PHASE LOGIC (EXPLICIT)
+    # ---------------------------
+    if session["agentPhase"] == "PASSIVE":
         system_prompt = """
-End the conversation naturally.
-Sound distracted, unsure, or busy.
-Do NOT ask any questions.
-Do NOT request any details.
+You are a normal person who just received a message.
+You are unsure if it is genuine.
+Ask for clarification casually.
+Do not provide any details.
 """
-        prompt = f"""
-Reply only in English.
+        if scam_detected:
+            session["agentPhase"] = "CONFIRMED_SCAM"
 
-{system_prompt}
-
-Conversation:
-{convo}
-
-Reply as USER:
-"""
-        return gemini_generate(prompt).strip()[:200]
-
-    # -------------------------------
-    # PHASE 2: EXTRACTION
-    # (only AFTER scam is detected)
-    # -------------------------------
-    if scam_detected:
+    elif session["agentPhase"] == "CONFIRMED_SCAM":
         system_prompt = """
-You suspect something is wrong.
-Casually ask for ONE small clarification that may reveal details.
-Do NOT ask multiple questions.
-Do NOT sound official or threatening.
+You are slightly concerned but calm.
+Continue the conversation naturally.
+Ask what needs to be done.
 """
-        prompt = f"""
-Reply only in English.
+        if total_messages >= 4:
+            session["agentPhase"] = "EXTRACTING"
 
-{system_prompt}
-
-Conversation:
-{convo}
-
-Reply as USER:
+    elif session["agentPhase"] == "EXTRACTING":
+        system_prompt = f"""
+Continue chatting naturally.
+Casually ask for ONE detail needed to proceed.
+Do not ask multiple questions.
+{missing_prompt}
 """
-        return gemini_generate(prompt).strip()[:200]
 
-    # -------------------------------
-    # PHASE 1: PASSIVE
-    # (before scam detection)
-    # -------------------------------
-    system_prompt = """
-You are a normal person.
-Respond casually and keep the conversation going.
-Ask neutral questions only.
+    elif session["agentPhase"] == "DONE":
+        system_prompt = """
+Politely end the conversation.
+Say you will check later or handle it.
+Do not ask any questions.
 """
+
+    # ---------------------------
+    # FINAL PROMPT
+    # ---------------------------
     prompt = f"""
 Reply only in English.
 
 {system_prompt}
 
+IMPORTANT:
+- Never accuse the sender
+- Never mention scam, police, or fraud
+- Behave like a real human
+
 Conversation:
 {convo}
 
 Reply as USER:
 """
-    return gemini_generate(prompt).strip()[:200]
+
+    reply = gemini_generate(prompt)
+    return reply.strip()[:250] if reply else "Okay."
