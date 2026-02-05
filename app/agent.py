@@ -1,77 +1,98 @@
+import re
 from app.gemini_client import gemini_generate
 
-DETAILS_LIST = ["bank account", "UPI ID", "phone number", "account details", "links"]
+MAX_MESSAGES = 20
 
-def agent_reply(session):
-    history = session.get("messages", [])
+
+def extract_intelligence(text: str, intelligence: dict):
+    text_l = text.lower()
+
+    # UPI IDs
+    upi_matches = re.findall(r'\b[\w.\-]{2,}@[a-z]{2,}\b', text_l)
+    intelligence["upiIds"].extend(upi_matches)
+
+    # Phone numbers (accept plain 10-digit)
+    phone_matches = re.findall(r'\b(?:\+91[-\s]?)?\d{10}\b', text)
+    intelligence["phoneNumbers"].extend(phone_matches)
+
+    # Links (with or without protocol)
+    link_matches = re.findall(
+        r'\b(?:https?://|www\.)[^\s]+\b|\b[a-zA-Z0-9.-]+\.(?:com|in|net|org|co)\b',
+        text
+    )
+    intelligence["phishingLinks"].extend(link_matches)
+
+    # Bank account numbers
+    bank_matches = re.findall(r'\b\d{9,18}\b', text)
+    intelligence["bankAccounts"].extend(bank_matches)
+
+
+def agent_reply(session: dict) -> str:
+    history = session["messages"]
+    intelligence = session["intelligence"]
     total_messages = len(history)
 
-    # 🔹 Use a SET to track collected details
-    collected_details = session.setdefault("collected_details", set())
+    # Extract intelligence from LAST scammer message
+    if history:
+        extract_intelligence(history[-1]["text"], intelligence)
 
-    # -------- BUILD CONTEXT (LAST 6 MESSAGES) --------
+    # Trim context
     convo = ""
     for m in history[-6:]:
-        sender = m.get("sender", "user")
-        text = m.get("text", "")
-        convo += f"{sender.upper()}: {text}\n"
+        convo += f"{m['sender'].upper()}: {m['text']}\n"
 
-    # -------- DETECT DETAILS FROM USER MESSAGES --------
-    # IMPORTANT: extraction happens from USER replies, not agent replies
-    for m in history:
-        if m.get("sender") == "scammer":  # scammer is the one giving details
-            text = m.get("text", "").lower()
-            for detail in DETAILS_LIST:
-                if detail.lower() in text:
-                    collected_details.add(detail)
-
-    session["collected_details"] = collected_details
-
-    # -------- STOP CONDITION (YOUR RULE) --------
-    if total_messages >= 15 and collected_details:
-        system_prompt = """
-Now you have collected enough details.
-Politely end the conversation.
-Sound cooperative and natural.
-Do NOT ask any more questions.
-"""
+    # -------- STOP CONDITION --------
+    if total_messages >= MAX_MESSAGES:
         session["agentPhase"] = "DONE"
 
-    else:
-        # -------- DETERMINE MISSING DETAILS --------
-        missing_details = [d for d in DETAILS_LIST if d not in collected_details]
-
-        # -------- PHASE LOGIC --------
-        if total_messages < 3:
-            # Early conversation
-            system_prompt = """
-You are a normal person having a casual conversation.
-Respond naturally and ask what this is about.
-Do NOT ask for any sensitive details yet.
+    # -------- PHASE DECISION --------
+    if session["agentPhase"] == "DONE":
+        system_prompt = """
+You have collected enough information.
+Politely end the conversation.
+Do not ask any questions.
 """
-            session["agentPhase"] = "PASSIVE"
+    elif not session["scamDetected"]:
+        system_prompt = """
+You are a normal person.
+Reply casually and briefly.
+Do not ask for sensitive details yet.
+"""
+    else:
+        # Scam detected → actively extract
+        missing = []
+        if not intelligence["phoneNumbers"]:
+            missing.append("phone number")
+        elif not intelligence["upiIds"]:
+            missing.append("UPI ID")
+        elif not intelligence["phishingLinks"]:
+            missing.append("verification link")
+        elif not intelligence["bankAccounts"]:
+            missing.append("bank account number")
 
-        else:
-            # Start extracting ONE detail at a time
-            detail_to_ask = missing_details[0] if missing_details else "details"
+        if missing:
+            ask = missing[0]
             system_prompt = f"""
-You are slightly confused but cooperative.
-Casually ask about the {detail_to_ask}.
-Do not sound suspicious.
-Ask only ONE question.
+You trust the sender and want to proceed.
+Casually ask for the {ask}.
+Keep it natural and short.
 """
             session["agentPhase"] = "EXTRACTING"
+        else:
+            session["agentPhase"] = "DONE"
+            system_prompt = """
+You have received all required details.
+Politely end the conversation.
+"""
 
     # -------- FINAL PROMPT --------
     prompt = f"""
 Reply only in English.
 
-{system_prompt}
-
-IMPORTANT RULES:
-- Never accuse the sender
-- Never mention scam, police, or fraud
-- Keep replies short, human, and realistic
+IMPORTANT:
+- Never accuse the sender of scam
+- Never mention police or fraud
+- Keep replies realistic and short
 
 Conversation:
 {convo}
@@ -80,5 +101,4 @@ Reply as USER:
 """
 
     reply = gemini_generate(prompt)
-
-    return reply.strip()[:250] if reply else "Okay."
+    return reply.strip()[:250]
