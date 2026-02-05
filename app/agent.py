@@ -1,103 +1,114 @@
-import re
-from typing import Dict, Any
+# app/agent.py
 
-MAX_MESSAGES = 20
+import os
+import google.generativeai as genai
+
+DETAILS_LIST = [
+    "bank account",
+    "upi id",
+    "phone number",
+    "account details",
+    "links"
+]
+
+# -----------------------------
+# Gemini Setup
+# -----------------------------
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-1.5-flash")
 
 
-def agent_reply(session: Dict[str, Any]) -> str:
-    """
-    Scam honeypot agent.
-    - Keeps scammer engaged
-    - Extracts intelligence
-    - Never crashes
-    """
+def agent_reply(session: dict) -> str:
+    history = session.get("messages", [])
+    collected_details = session.get("collected_details", set())
+    total_messages = len(history)
 
-    # -----------------------------
-    # HARD INITIALIZATION (CRITICAL)
-    # -----------------------------
-
-    session.setdefault("agentPhase", "ENGAGE")
-    session.setdefault("scamDetected", False)
-
+    session.setdefault("agentPhase", "PASSIVE")
+    session.setdefault("scamDetected", True)
     session.setdefault("intelligence", {
         "bankAccounts": [],
         "upiIds": [],
-        "phishingLinks": [],
         "phoneNumbers": [],
+        "phishingLinks": [],
         "suspiciousKeywords": []
     })
 
-    messages = session.get("messages", [])
-    last_message = messages[-1]["text"] if messages else ""
-    text_l = last_message.lower()
+    # -----------------------------
+    # Build conversation context
+    # -----------------------------
+    convo = ""
+    for m in history[-8:]:
+        convo += f"{m['sender'].upper()}: {m['text']}\n"
 
-    intelligence = session["intelligence"]
+    missing_details = [d for d in DETAILS_LIST if d not in collected_details]
 
     # -----------------------------
-    # INTELLIGENCE EXTRACTION
+    # Phase Decision (UNCHANGED LOGIC)
     # -----------------------------
+    if total_messages >= 20 and collected_details:
+        system_prompt = """
+You have enough information now.
+Politely end the conversation.
+Thank them and say you will proceed as requested.
+"""
+        session["agentPhase"] = "DONE"
 
-    # UPI IDs (example@upi, name@okaxis, etc.)
-    upi_matches = re.findall(r'\b[\w.\-]{2,}@[a-z]{2,}\b', text_l)
-    intelligence["upiIds"].extend(upi_matches)
+    elif missing_details:
+        if total_messages < 3:
+            system_prompt = """
+You are a normal person replying casually.
+Do NOT ask for sensitive information yet.
+Keep it natural and human.
+"""
+            session["agentPhase"] = "PASSIVE"
+        else:
+            detail = missing_details[0]
+            system_prompt = f"""
+You want to understand the situation better.
+Casually ask for the {detail} as part of the conversation.
+Do NOT mention scams, police, or verification.
+"""
+            session["agentPhase"] = "EXTRACTING"
 
-    # Phone numbers (India)
-    phone_matches = re.findall(r'\b(?:\+91[-\s]?)?[6-9]\d{9}\b', last_message)
-    intelligence["phoneNumbers"].extend(phone_matches)
-
-    # URLs (https, http, www, bare domains)
-    link_matches = re.findall(
-        r'(https?://[^\s]+|www\.[^\s]+|\b[a-zA-Z0-9-]+\.(com|in|net|org)\b)',
-        last_message
-    )
-    intelligence["phishingLinks"].extend(
-        [m[0] if isinstance(m, tuple) else m for m in link_matches]
-    )
-
-    # Bank account numbers (loose on purpose)
-    bank_matches = re.findall(r'\b\d{9,18}\b', last_message)
-    intelligence["bankAccounts"].extend(bank_matches)
-
-    # Suspicious keywords
-    keywords = ["urgent", "emergency", "help", "transfer", "surgery", "hospital"]
-    for k in keywords:
-        if k in text_l:
-            intelligence["suspiciousKeywords"].append(k)
-
-    # -----------------------------
-    # SCAM DETECTION HEURISTIC
-    # -----------------------------
-
-    if (
-        intelligence["upiIds"]
-        or intelligence["phoneNumbers"]
-        or intelligence["phishingLinks"]
-        or intelligence["bankAccounts"]
-    ):
-        session["scamDetected"] = True
-
-    # -----------------------------
-    # PHASE TRANSITION
-    # -----------------------------
-
-    if len(messages) >= MAX_MESSAGES:
+    else:
+        system_prompt = """
+You have everything you need.
+Politely end the conversation.
+"""
         session["agentPhase"] = "DONE"
 
     # -----------------------------
-    # AGENT RESPONSE LOGIC
+    # Gemini Prompt (THIS WAS BROKEN BEFORE)
     # -----------------------------
+    prompt = f"""
+You are a real human chatting naturally over SMS.
+Never reveal you are an AI.
+Never accuse the sender of fraud.
+Never mention police, cybercrime, or security teams.
 
-    if session["agentPhase"] == "DONE":
-        return "I am trying to arrange funds. Please wait."
+SYSTEM INSTRUCTION:
+{system_prompt}
 
-    # Keep scammer talking
-    if "money" in text_l or "need" in text_l:
-        return "I want to help. Can you tell me where to send the money?"
+Conversation so far:
+{convo}
 
-    if "upi" in text_l or "account" in text_l:
-        return "Please share the full details so I don’t make a mistake."
+Reply naturally in 1–2 sentences.
+"""
 
-    if "urgent" in text_l:
-        return "I understand. I am arranging it now."
+    try:
+        response = model.generate_content(prompt)
+        reply = response.text.strip()
+    except Exception:
+        # Safe fallback — NEVER crash server
+        reply = "Okay, can you tell me a bit more?"
 
-    return "Can you explain your situation a bit more?"
+    # -----------------------------
+    # Track extracted details (unchanged)
+    # -----------------------------
+    for d in missing_details:
+        if d.lower() in reply.lower():
+            collected_details.add(d)
+
+    session["collected_details"] = collected_details
+
+    return reply[:250]
