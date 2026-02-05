@@ -1,107 +1,77 @@
 from app.gemini_client import gemini_generate
 
-def agent_reply(session: dict) -> str:
-    # ---------------------------
-    # SESSION STATE
-    # ---------------------------
-    history = session.setdefault("messages", [])
-    phase = session.setdefault("agentPhase", "PASSIVE")
+DETAILS_LIST = ["bank account", "UPI ID", "phone number", "account details", "links"]
 
-    intelligence = session.setdefault("intelligence", {
-        "upiIds": [],
-        "phoneNumbers": [],
-        "phishingLinks": [],
-        "bankAccounts": [],
-        "suspiciousKeywords": []
-    })
-
-    scam_detected = session.get("scamDetected", False)
-
-    # ---------------------------
-    # HELPER CHECKS
-    # ---------------------------
-    intelligence_found = any(len(v) > 0 for v in intelligence.values())
+def agent_reply(session):
+    history = session.get("messages", [])
     total_messages = len(history)
 
-    # 🔴 HARD STOP CONDITION
-    if total_messages >= 7 and intelligence_found:
-        session["agentPhase"] = "DONE"
+    # 🔹 Use a SET to track collected details
+    collected_details = session.setdefault("collected_details", set())
 
-    # ---------------------------
-    # BUILD CONTEXT (LAST 6 MSGS)
-    # ---------------------------
+    # -------- BUILD CONTEXT (LAST 6 MESSAGES) --------
     convo = ""
     for m in history[-6:]:
         sender = m.get("sender", "user")
-        convo += f"{sender.upper()}: {m.get('text','')}\n"
+        text = m.get("text", "")
+        convo += f"{sender.upper()}: {text}\n"
 
-    # ---------------------------
-    # WHAT IS STILL MISSING
-    # ---------------------------
-    missing_items = []
-    if not intelligence["upiIds"]:
-        missing_items.append("UPI ID")
-    if not intelligence["phoneNumbers"]:
-        missing_items.append("phone number")
-    if not intelligence["phishingLinks"]:
-        missing_items.append("verification link")
-    if not intelligence["bankAccounts"]:
-        missing_items.append("bank account details")
+    # -------- DETECT DETAILS FROM USER MESSAGES --------
+    # IMPORTANT: extraction happens from USER replies, not agent replies
+    for m in history:
+        if m.get("sender") == "scammer":  # scammer is the one giving details
+            text = m.get("text", "").lower()
+            for detail in DETAILS_LIST:
+                if detail.lower() in text:
+                    collected_details.add(detail)
 
-    if missing_items:
-        missing_prompt = "Casually try to ask for: " + ", ".join(missing_items) + "."
+    session["collected_details"] = collected_details
+
+    # -------- STOP CONDITION (YOUR RULE) --------
+    if total_messages >= 7 and collected_details:
+        system_prompt = """
+Now you have collected enough details.
+Politely end the conversation.
+Sound cooperative and natural.
+Do NOT ask any more questions.
+"""
+        session["agentPhase"] = "DONE"
+
     else:
-        missing_prompt = "You have collected enough information. End the conversation."
+        # -------- DETERMINE MISSING DETAILS --------
+        missing_details = [d for d in DETAILS_LIST if d not in collected_details]
 
-    # ---------------------------
-    # PHASE LOGIC (EXPLICIT)
-    # ---------------------------
-    if session["agentPhase"] == "PASSIVE":
-        system_prompt = """
-You are a normal person who just received a message.
-You are unsure if it is genuine.
-Ask for clarification casually.
-Do not provide any details.
+        # -------- PHASE LOGIC --------
+        if total_messages < 3:
+            # Early conversation
+            system_prompt = """
+You are a normal person having a casual conversation.
+Respond naturally and ask what this is about.
+Do NOT ask for any sensitive details yet.
 """
-        if scam_detected:
-            session["agentPhase"] = "CONFIRMED_SCAM"
+            session["agentPhase"] = "PASSIVE"
 
-    elif session["agentPhase"] == "CONFIRMED_SCAM":
-        system_prompt = """
-You are slightly concerned but calm.
-Continue the conversation naturally.
-Ask what needs to be done.
+        else:
+            # Start extracting ONE detail at a time
+            detail_to_ask = missing_details[0] if missing_details else "details"
+            system_prompt = f"""
+You are slightly confused but cooperative.
+Casually ask about the {detail_to_ask}.
+Do not sound suspicious.
+Ask only ONE question.
 """
-        if total_messages >= 4:
             session["agentPhase"] = "EXTRACTING"
 
-    elif session["agentPhase"] == "EXTRACTING":
-        system_prompt = f"""
-Continue chatting naturally.
-Casually ask for ONE detail needed to proceed.
-Do not ask multiple questions.
-{missing_prompt}
-"""
-
-    elif session["agentPhase"] == "DONE":
-        system_prompt = """
-Politely end the conversation.
-Say you will check later or handle it.
-Do not ask any questions.
-"""
-
-    # ---------------------------
-    # FINAL PROMPT
-    # ---------------------------
+    # -------- FINAL PROMPT --------
     prompt = f"""
 Reply only in English.
 
 {system_prompt}
 
-IMPORTANT:
+IMPORTANT RULES:
 - Never accuse the sender
 - Never mention scam, police, or fraud
-- Behave like a real human
+- Keep replies short, human, and realistic
 
 Conversation:
 {convo}
@@ -110,4 +80,5 @@ Reply as USER:
 """
 
     reply = gemini_generate(prompt)
+
     return reply.strip()[:250] if reply else "Okay."
