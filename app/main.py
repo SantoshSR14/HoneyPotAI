@@ -6,7 +6,7 @@ app = FastAPI()  # <-- Must be here at top level
 
 sessions = {}  # in-memory session store
 
-@app.post("/api/honeypot/message")
+@app.post("/")
 async def honeypot_message(req: Request):
     try:
         data = await req.json()
