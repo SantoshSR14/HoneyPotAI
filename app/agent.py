@@ -1,59 +1,66 @@
+import requests
 from app.gemini_client import gemini_generate
 
-DETAILS_LIST = ["bank account", "UPI ID", "phone number", "account details", "links"]
+# Define the intelligence fields
+DETAILS_MAPPING = {
+    "bankAccounts": "bank account",
+    "upiIds": "UPI ID",
+    "phoneNumbers": "phone number",
+    "phishingLinks": "links",
+    "suspiciousKeywords": "suspicious keyword"
+}
+
+GUVI_ENDPOINT = "https://guvi-endpoint.example/api/report"  # replace with actual endpoint
 
 def agent_reply(session):
+    """
+    Progressive and rule-based agent reply generator
+    """
     history = session.get("messages", [])
-    collected_details = session.get("collected_details", set())
     total_messages = len(history)
-    
-    # Build conversation safely (last 6 messages for context)
+
+    # Initialize intelligence collection if not present
+    if "collected_details" not in session:
+        session["collected_details"] = {k: [] for k in DETAILS_MAPPING.keys()}
+
+    collected_details = session["collected_details"]
+
+    # Build conversation context (last 6 messages)
     convo = ""
     for m in history[-6:]:
-        sender = m.get("sender", "user")
-        text = m.get("text", "")
-        convo += f"{sender.upper()}: {text}\n"
+        convo += f"{m.get('sender','user').upper()}: {m.get('text','')}\n"
 
     # Determine missing details
-    missing_details = [d for d in DETAILS_LIST if d not in collected_details]
+    missing_details = [k for k, v in DETAILS_MAPPING.items() if not collected_details[k]]
 
     # -------- Decide Agent Phase --------
-    if total_messages > 8 and collected_details:
-        # Stop if enough messages and at least one detail collected
+    if total_messages < 3:
+        # Early conversation: stay casual
+        phase = "PASSIVE"
         system_prompt = """
-Now you have collected enough details. Politely end the conversation.
-Thank the sender and say you would do what they asked you to do so.
-"""
-        next_phase = "DONE"
-
-    elif missing_details:
-        # Progressive detail extraction: only start asking after 2-3 messages
-        if total_messages < 3:
-            # Early conversation: stay casual, don't ask details yet
-            system_prompt = """
 You are a normal person having a casual conversation.
-Respond naturally, engage the sender, and keep it short (1-2 sentences).
+Respond naturally, engage the sender, and keep it short (1–2 sentences).
 Do NOT ask for any sensitive details yet.
 """
-            next_phase = "PASSIVE"
-        else:
-            # Ask for the first missing detail in a casual way
-            detail_to_ask = missing_details[0]
-            system_prompt = f"""
-You are now going to collect the {detail_to_ask} from the sender.
+    elif missing_details:
+        # Progressive detail extraction: ask one missing detail at a time
+        phase = "EXTRACTING"
+        detail_key = missing_details[0]
+        detail_name = DETAILS_MAPPING[detail_key]
+        system_prompt = f"""
+You are going to collect the {detail_name} from the sender.
 Do it casually as part of the conversation. Do NOT mention scams or police.
-Keep your reply short (1-2 sentences) and realistic.
+Keep your reply short (1–2 sentences) and realistic.
 """
-            next_phase = "EXTRACTING"
     else:
-        # No missing details left, politely end conversation
+        # No missing details left, polite ending
+        phase = "DONE"
         system_prompt = """
-Now you have done the agent's job. Politely end the conversation.
-Thank the sender and say you will do what they asked for and cooperate to them.
+Now you have done your job. Politely end the conversation.
+Thank the sender and say you won't be able to proceed further.
 """
-        next_phase = "DONE"
-
-    # -------- Build final prompt --------
+    
+    # -------- Build final prompt for Gemini --------
     prompt = f"""
 Reply only in English.
 
@@ -70,17 +77,64 @@ Conversation:
 Reply as USER:
 """
 
+    # Generate agent reply
     reply = gemini_generate(prompt)
 
+    # -------- Extract details from reply (simple keyword check) --------
     if reply:
-        session["agentPhase"] = next_phase
+        # Try to detect detail mentions (basic)
+        for key, name in DETAILS_MAPPING.items():
+            if name.lower() in reply.lower() and reply not in collected_details[key]:
+                collected_details[key].append(reply.strip())
 
-        # Track details if mentioned in reply (simple keyword check)
-        for detail in missing_details:
-            if detail.lower() in reply.lower():
-                collected_details.add(detail)
         session["collected_details"] = collected_details
+        session["agentPhase"] = phase
 
-        return reply.strip()[:250]
+    # -------- Check if final payload should be sent --------
+    if should_send_final_payload(session):
+        final_payload = build_final_payload(session)
+        # Send to GUVI endpoint
+        try:
+            requests.post(GUVI_ENDPOINT, json=final_payload, timeout=5)
+        except Exception as e:
+            # Log failure somewhere if needed
+            print("Error sending final payload:", e)
+        session["agentPhase"] = "DONE"
 
-    return "Can you explain what this is about?"
+    return reply.strip()[:250] if reply else "Can you explain what this is about?"
+
+
+# -------- Helper functions --------
+
+def should_send_final_payload(session):
+    """
+    Send final payload only if:
+    1. Scam detected
+    2. Sufficient engagement (>=8 messages)
+    3. At least one detail collected
+    """
+    enough_messages = len(session.get("messages", [])) >= 8
+    has_details = any(session.get("collected_details", {}).values())
+    scam_confirmed = session.get("scamDetected", False)
+    return scam_confirmed and enough_messages and has_details
+
+
+def build_final_payload(session):
+    """
+    Construct GUVI endpoint payload
+    """
+    collected = session.get("collected_details", {})
+    payload = {
+        "sessionId": session.get("sessionId", ""),
+        "scamDetected": session.get("scamDetected", False),
+        "totalMessagesExchanged": len(session.get("messages", [])),
+        "extractedIntelligence": {
+            "bankAccounts": collected.get("bankAccounts", []),
+            "upiIds": collected.get("upiIds", []),
+            "phishingLinks": collected.get("phishingLinks", []),
+            "phoneNumbers": collected.get("phoneNumbers", []),
+            "suspiciousKeywords": collected.get("suspiciousKeywords", [])
+        },
+        "agentNotes": session.get("agentNotes", "")
+    }
+    return payload
